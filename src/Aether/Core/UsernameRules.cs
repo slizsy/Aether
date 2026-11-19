@@ -1,19 +1,9 @@
-namespace SlizsyChecker;
+namespace Aether;
 
 public sealed record CustomLoad(List<string> Names, int Invalid, int Skipped);
 
 public static class UsernameRules
 {
-    public static readonly Dictionary<string, string> Charsets = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["lower"] = "abcdefghijklmnopqrstuvwxyz",
-        ["digits"] = "0123456789",
-        ["lowernum"] = "abcdefghijklmnopqrstuvwxyz0123456789",
-        ["all"] = "abcdefghijklmnopqrstuvwxyz0123456789_."
-    };
-
-    public static readonly string[] CharsetNames = { "lower", "digits", "lowernum", "all" };
-
     public static bool IsValid(string name)
     {
         if (name.Length < 2 || name.Length > 32) return false;
@@ -30,40 +20,25 @@ public static class UsernameRules
 
     public static List<string> Generate(UsernamesCfg cfg, Func<string, bool> skip)
     {
-        string chars = Charsets.TryGetValue(cfg.Charset, out var set) ? set : Charsets["lowernum"];
-        int length = Math.Clamp(cfg.Length, 2, 32);
+        var pattern = Patterns.Find(cfg.Pattern);
+        int length = Math.Clamp(cfg.Length, pattern.MinLength, 32);
         int want = Math.Max(0, cfg.Amount);
-        double space = Math.Pow(chars.Length, length);
 
-        if (space <= 1_000_000)
+        var everything = Patterns.Enumerate(pattern, length);
+        if (everything != null)
         {
-            int total = (int)space;
-            var all = new List<string>(total);
-            var buffer = new char[length];
-            for (int i = 0; i < total; i++)
-            {
-                int n = i;
-                for (int p = length - 1; p >= 0; p--)
-                {
-                    buffer[p] = chars[n % chars.Length];
-                    n /= chars.Length;
-                }
-                var candidate = new string(buffer);
-                if (IsValid(candidate) && !skip(candidate)) all.Add(candidate);
-            }
-            Shuffle(all);
-            if (all.Count > want) all.RemoveRange(want, all.Count - want);
-            return all;
+            everything.RemoveAll(n => !IsValid(n) || skip(n));
+            Shuffle(everything);
+            if (everything.Count > want) everything.RemoveRange(want, everything.Count - want);
+            return everything;
         }
 
-        var result = new List<string>(want);
+        var result = new List<string>(Math.Min(want, 100_000));
         var seen = new HashSet<string>();
-        var buf = new char[length];
         long maxTries = (long)want * 20 + 1000;
         for (long t = 0; t < maxTries && result.Count < want; t++)
         {
-            for (int p = 0; p < length; p++) buf[p] = chars[Random.Shared.Next(chars.Length)];
-            var candidate = new string(buf);
+            var candidate = Patterns.Make(pattern, length);
             if (!IsValid(candidate) || skip(candidate) || !seen.Add(candidate)) continue;
             result.Add(candidate);
         }
@@ -85,7 +60,7 @@ public static class UsernameRules
             foreach (var raw in File.ReadLines(Paths.Usernames))
             {
                 var name = raw.Trim().ToLowerInvariant();
-                if (name.Length == 0) continue;
+                if (name.Length == 0 || name[0] == '#') continue;
                 if (!IsValid(name)) { invalid++; continue; }
                 if (!seen.Add(name)) continue;
                 if (skip(name)) { skipped++; continue; }
@@ -104,7 +79,7 @@ public static class UsernameRules
         foreach (var raw in lines)
         {
             var name = raw.Trim().ToLowerInvariant();
-            if (name.Length == 0) continue;
+            if (name.Length == 0 || name[0] == '#') continue;
             if (!IsValid(name)) { invalid++; continue; }
             if (seen.Add(name)) names.Add(name);
         }
