@@ -1,4 +1,4 @@
-namespace SlizsyChecker;
+namespace Aether;
 
 internal static class Program
 {
@@ -11,7 +11,7 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            Term.Line(("  [!] ", Tones.Red), (ex.Message, Tones.White));
+            Term.Warn(ex.Message);
             Input.Pause();
             return 1;
         }
