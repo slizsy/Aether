@@ -11,7 +11,7 @@
     <Product>Aether</Product>
     <Authors>slizsy</Authors>
     <Company>slizsy</Company>
-    <Version>2.0.0</Version>
+    <Version>2.1.0</Version>
     <InvariantGlobalization>true</InvariantGlobalization>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
