@@ -21,13 +21,17 @@ public sealed class Runner : IDisposable
     private readonly Blacklist _blacklist;
     private readonly Checker _checker;
     private readonly ConcurrentDictionary<string, int> _reasons = new();
+    private readonly ConcurrentQueue<string> _found = new();
+    private readonly string _source;
+    private Webhook? _hook;
     private long _lastStatus;
     private bool _warnedStall;
     private bool _warnedAllFail;
 
-    public Runner(AppConfig cfg, ProxyPool pool, Blacklist blacklist)
+    public Runner(AppConfig cfg, ProxyPool pool, Blacklist blacklist, string source)
     {
         _cfg = cfg;
+        _source = source;
         _pool = pool;
         _blacklist = blacklist;
         _checker = new Checker(cfg, pool);
@@ -60,6 +64,15 @@ public sealed class Runner : IDisposable
             }
         }
 
+        if (!string.IsNullOrWhiteSpace(_cfg.Webhook))
+        {
+            var hook = await Webhook.CheckAsync(_cfg.Webhook);
+            if (hook.Ok)
+                Term.Line(("  [+] ", Tones.Green), ("webhook".PadRight(24), Tones.White), (hook.Message, Tones.Gray));
+            else
+                Term.Line(("  [-] ", Tones.Red), ("webhook".PadRight(24), Tones.White), (hook.Message, Tones.Gray));
+        }
+
         Term.Blank();
         if (ok > 0)
         {
@@ -86,6 +99,7 @@ public sealed class Runner : IDisposable
         using var session = new SessionFiles();
         using var cts = new CancellationTokenSource();
         bool stopped = false;
+        _hook = string.IsNullOrWhiteSpace(_cfg.Webhook) ? null : new Webhook(_cfg.Webhook);
 
         ConsoleCancelEventHandler onCancel = (_, e) =>
         {
@@ -123,6 +137,16 @@ public sealed class Runner : IDisposable
         Term.Title("Aether");
         Summary(stats, session, stopped);
 
+        if (_hook != null)
+        {
+            await _hook.FinishAsync(stats.Done, stats.Total, stats.Available, stats.Taken, stats.Failed + stats.Invalid,
+                stats.Clock.Elapsed, stopped, _found.ToArray());
+            if (_hook.Failed == 0)
+                Term.Row("Webhook", $"{_hook.Sent} messages sent", Tones.Green);
+            else
+                Term.Row("Webhook", $"{_hook.Failed} failed: {_hook.LastError}", Tones.Yellow);
+        }
+
         var life = LifetimeStats.Load();
         life.Sessions++;
         life.Checked += stats.Done;
@@ -144,10 +168,10 @@ public sealed class Runner : IDisposable
                 int found = Interlocked.Increment(ref s.Available);
                 _blacklist.Add(name);
                 session.AddAvailable(name);
+                _found.Enqueue(name);
+                _hook?.Post(new Hit(name, found, done, s.Total, _source));
                 Emit(session, "[+]", Tones.Green, "available", name, done, s.Total, true, null);
                 if (_cfg.Beep) Term.Bell();
-                if (!string.IsNullOrWhiteSpace(_cfg.Webhook))
-                    await Webhook.SendAsync(_cfg.Webhook, name, found);
                 break;
             }
             case Verdict.Taken:
