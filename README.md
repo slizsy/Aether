@@ -47,7 +47,8 @@ Aether keeps its files in folders next to the app, so put it in its own folder.
 - Connection check before every run, so a broken setup fails fast
 - Live progress bar with speed and ETA
 - Settings presets: auto, safe, balanced, fast, custom
-- Discord webhook and optional beep when a name is available
+- Discord alerts the moment a name is found, plus a summary when the run ends
+- Optional beep when a name is available
 - Per-session results and logs, plus all-time stats
 
 ## Usage
@@ -83,6 +84,15 @@ Press `Ctrl+C` during a run to stop it cleanly.
 | 8 | Palindrome | `abccba`, `xyzzyx` |
 | 9 | Random Mix | a bit of everything |
 
+### Discord alerts
+
+1. In Discord, open **Channel settings > Integrations > Webhooks**, create a webhook and click **Copy Webhook URL**.
+2. In Aether, open **5 Settings**, paste the URL at the webhook prompt and send the test message.
+
+Every available name is posted to that channel as Aether, with the pattern, its place in the run and the progress so far.
+When the run ends you also get a summary with every name found, so nothing gets lost in the scroll.
+Alerts are sent in the background, so checking never slows down, and names found at the same moment are grouped into one message.
+
 ### Proxies
 
 One proxy per line in `data/proxies.txt`, or paste them under **Proxies**. All of these work:
@@ -110,7 +120,7 @@ Settings are stored in `data/config.json` and can be changed from the app.
 | `retry.max_attempts` | `5` | Attempts per username |
 | `threads` | `20` | Concurrent checks |
 | `timeout` | `15` | Request timeout in seconds |
-| `webhook` | `""` | Discord webhook URL for available names |
+| `webhook` | `""` | Discord webhook URL for alerts |
 | `verbose` | `true` | Show every result, not only available names |
 | `beep` | `false` | Beep when a name is available |
 
