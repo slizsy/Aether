@@ -39,7 +39,7 @@ public sealed class App
                 case "2": note = PatternMenu(); break;
                 case "3": note = PasteUsernames(); break;
                 case "4": await ProxiesMenuAsync(); break;
-                case "5": SettingsMenu(); break;
+                case "5": await SettingsMenuAsync(); break;
                 case "6": FilesMenu(); break;
                 case "7": return;
                 case "": break;
@@ -158,7 +158,7 @@ public sealed class App
             return new Note("No usernames to check. Generate or paste some first.", false);
 
         Banner.Show();
-        using var runner = new Runner(_cfg, _pool, _blacklist);
+        using var runner = new Runner(_cfg, _pool, _blacklist, Source());
 
         bool connected = await runner.PreflightAsync();
         if (!connected && !Input.Bool("Start anyway", false))
@@ -417,7 +417,7 @@ public sealed class App
         _pool.Load();
     }
 
-    private void SettingsMenu()
+    private async Task SettingsMenuAsync()
     {
         Header("Settings");
         var c = _cfg;
@@ -459,15 +459,32 @@ public sealed class App
         c.Beep = Input.Bool("Beep when a name is available", c.Beep);
 
         string state = string.IsNullOrEmpty(c.Webhook) ? "none" : "set";
-        var hook = Input.Ask("Discord webhook, - clears", state);
+        var hook = Input.Ask("Discord webhook URL, - clears", state);
+        bool changed = false;
         if (hook == "-")
         {
             c.Webhook = "";
         }
         else if (!string.IsNullOrEmpty(hook))
         {
-            if (Webhook.IsValid(hook)) c.Webhook = hook;
-            else Term.Warn("That is not a Discord webhook URL, kept the old value.");
+            if (Webhook.IsValid(hook))
+            {
+                c.Webhook = Webhook.Clean(hook);
+                changed = true;
+            }
+            else
+            {
+                Term.Warn("That is not a Discord webhook URL, kept the old value.");
+                Term.Hint("In Discord: Channel settings > Integrations > Webhooks > Copy Webhook URL.");
+            }
+        }
+
+        if (!string.IsNullOrEmpty(c.Webhook) && Input.Bool("Send a test message", changed))
+        {
+            Term.Line(("  Sending...", Tones.Gray));
+            var test = await Webhook.TestAsync(c.Webhook);
+            if (test.Ok) Term.Good(test.Message);
+            else Term.Warn("Webhook failed: " + test.Message);
         }
 
         c.Normalize();
