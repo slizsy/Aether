@@ -1,6 +1,6 @@
 using System.Net;
 
-namespace SlizsyChecker;
+namespace Aether;
 
 public sealed class ProxyNode
 {
