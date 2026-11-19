@@ -1,14 +1,14 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace SlizsyChecker;
+namespace Aether;
 
 public sealed class UsernamesCfg
 {
     [JsonPropertyName("custom")] public bool Custom { get; set; }
     [JsonPropertyName("amount")] public int Amount { get; set; } = 1000;
     [JsonPropertyName("length")] public int Length { get; set; } = 3;
-    [JsonPropertyName("charset")] public string Charset { get; set; } = "lowernum";
+    [JsonPropertyName("pattern")] public string Pattern { get; set; } = Patterns.Default;
 }
 
 public sealed class RetryCfg
@@ -36,11 +36,9 @@ public sealed class AppConfig
         Timeout = Math.Clamp(Timeout, 1, 120);
         Retry.MaxAttempts = Math.Clamp(Retry.MaxAttempts, 1, 20);
         Usernames.Amount = Math.Clamp(Usernames.Amount, 1, 1_000_000);
-        Usernames.Length = Math.Clamp(Usernames.Length, 2, 32);
-        if (Usernames.Charset == null || !UsernameRules.Charsets.ContainsKey(Usernames.Charset))
-            Usernames.Charset = "lowernum";
-        else
-            Usernames.Charset = Usernames.Charset.ToLowerInvariant();
+        var pattern = Patterns.Find(Usernames.Pattern);
+        Usernames.Pattern = pattern.Key;
+        Usernames.Length = Math.Clamp(Usernames.Length, pattern.MinLength, 32);
     }
 }
 
