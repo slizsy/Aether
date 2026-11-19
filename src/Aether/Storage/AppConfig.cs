@@ -24,6 +24,7 @@ public sealed class AppConfig
     [JsonPropertyName("threads")] public int Threads { get; set; } = 20;
     [JsonPropertyName("timeout")] public int Timeout { get; set; } = 15;
     [JsonPropertyName("webhook")] public string Webhook { get; set; } = "";
+    [JsonPropertyName("ping")] public string Ping { get; set; } = "";
     [JsonPropertyName("verbose")] public bool Verbose { get; set; } = true;
     [JsonPropertyName("beep")] public bool Beep { get; set; }
 
@@ -32,6 +33,7 @@ public sealed class AppConfig
         Usernames ??= new UsernamesCfg();
         Retry ??= new RetryCfg();
         Webhook ??= "";
+        Ping = Aether.Webhook.NormalizePing(Ping);
         Threads = Math.Clamp(Threads, 1, 1000);
         Timeout = Math.Clamp(Timeout, 1, 120);
         Retry.MaxAttempts = Math.Clamp(Retry.MaxAttempts, 1, 20);
