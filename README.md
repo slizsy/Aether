@@ -88,8 +88,11 @@ Press `Ctrl+C` during a run to stop it cleanly.
 
 1. In Discord, open **Channel settings > Integrations > Webhooks**, create a webhook and click **Copy Webhook URL**.
 2. In Aether, open **5 Settings**, paste the URL at the webhook prompt and send the test message.
+3. Optional: choose who gets pinged on every alert: `here`, `everyone`, or your own user ID
+   (turn on Developer Mode in Discord, then right-click your name > **Copy User ID**).
 
-Every available name is posted to that channel as Aether, with the pattern, its place in the run and the progress so far.
+Every available name is posted to that channel as Aether, with its length, the pattern, its place in the run and the progress so far.
+Rare names (3 characters or less) get a gold card so they stand out.
 When the run ends you also get a summary with every name found, so nothing gets lost in the scroll.
 Alerts are sent in the background, so checking never slows down, and names found at the same moment are grouped into one message.
 
@@ -121,6 +124,7 @@ Settings are stored in `data/config.json` and can be changed from the app.
 | `threads` | `20` | Concurrent checks |
 | `timeout` | `15` | Request timeout in seconds |
 | `webhook` | `""` | Discord webhook URL for alerts |
+| `ping` | `""` | Who alerts ping: empty, `here`, `everyone` or a user ID |
 | `verbose` | `true` | Show every result, not only available names |
 | `beep` | `false` | Beep when a name is available |
 
