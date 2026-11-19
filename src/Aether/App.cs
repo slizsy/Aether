@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 
-namespace SlizsyChecker;
+namespace Aether;
 
 public sealed class App
 {
@@ -17,6 +17,7 @@ public sealed class App
     public async Task RunAsync()
     {
         Term.Init();
+        Term.Title("Aether");
         Paths.EnsureAll();
         _cfg = ConfigStore.Load(out var warning);
         _blacklist.Load();
@@ -29,31 +30,20 @@ public sealed class App
             DrawMain(note);
             note = null;
 
-            var choice = Input.Ask("  > ");
+            var choice = Input.Ask("Select an option");
             if (choice == null) return;
 
             switch (choice)
             {
-                case "1":
-                    note = await StartAsync();
-                    break;
-                case "2":
-                    UsernamesMenu();
-                    break;
-                case "3":
-                    await ProxiesMenuAsync();
-                    break;
-                case "4":
-                    SettingsMenu();
-                    break;
-                case "5":
-                    FilesMenu();
-                    break;
-                case "6":
-                    return;
-                default:
-                    note = new Note("Pick a number from the menu.", false);
-                    break;
+                case "1": note = await StartAsync(); break;
+                case "2": note = PatternMenu(); break;
+                case "3": note = PasteUsernames(); break;
+                case "4": await ProxiesMenuAsync(); break;
+                case "5": SettingsMenu(); break;
+                case "6": FilesMenu(); break;
+                case "7": return;
+                case "": break;
+                default: note = new Note("Pick a number from the menu.", false); break;
             }
         }
     }
@@ -79,56 +69,83 @@ public sealed class App
     {
         return _cfg.Usernames.Custom
             ? "your own list"
-            : $"random, {_cfg.Usernames.Length} chars, {_cfg.Usernames.Charset}";
+            : $"{Patterns.Find(_cfg.Usernames.Pattern).Name}, {_cfg.Usernames.Length} chars";
     }
 
-    private static void Item(string key, string label)
+    private static (string, Tone)[] Item(string key, string label, string? hint = null, int pad = 0)
     {
-        Term.Line(("  [", Tones.Gray), (key, Tones.Pink), ("] ", Tones.Gray), (label, Tones.White));
+        return new[]
+        {
+            ("[", Tones.Gray), (key, Tones.White), ("]", Tones.Gray),
+            (new string(' ', key.Length > 1 ? 1 : 2), Tones.Gray),
+            (pad > 0 ? label.PadRight(pad) : label, Tones.White),
+            (hint ?? "", Tones.Gray)
+        };
     }
+
+    private static void Menu(params (string Key, string Label)[] items)
+    {
+        foreach (var (key, label) in items)
+            Term.Line(new[] { ("  ", Tones.Gray) }.Concat(Item(key, label)).ToArray());
+    }
+
+    private static (string, Tone)[] Status(string label, Tone state, string value)
+    {
+        return new[] { ("  ● ", state), (label.PadRight(11), state), (value, Tones.White) };
+    }
+
+    private static (string, Tone)[] Detail(string text) => new[] { ("    " + text, Tones.Gray) };
 
     private static void Header(string title)
     {
         Banner.Show();
-        Term.Line(("  " + title, Tones.Pink));
-        Term.Blank();
+        Term.Section(title);
     }
 
     private static void ShowNote(Note? note)
     {
         if (note == null) return;
         Term.Blank();
-        var n = note.Value;
-        Term.Line(n.Good ? ("  [+] ", Tones.Green) : ("  [!] ", Tones.Yellow), (n.Text, Tones.White));
+        if (note.Value.Good) Term.Good(note.Value.Text);
+        else Term.Warn(note.Value.Text);
     }
 
     private void DrawMain(Note? note)
     {
         Banner.Show();
 
-        Term.Line(("  Usernames  ", Tones.Gray), (_names.Count.ToString("N0"), Tones.Cyan), ("   " + Source(), Tones.Gray));
-        Term.Line(
-            ("  Proxies    ", Tones.Gray), (_pool.Count.ToString(), Tones.Cyan),
-            ("   Threads  ", Tones.Gray), (_cfg.Threads.ToString(), Tones.Cyan),
-            ("   Checked before  ", Tones.Gray), (_blacklist.Count.ToString("N0"), Tones.Cyan));
-        Term.Blank();
+        var left = new List<(string, Tone)[]>
+        {
+            Status("USERNAMES", _names.Count > 0 ? Tones.Green : Tones.Red, $"{_names.Count:N0} ready"),
+            Detail(Source()),
+            Status("PROXIES", _pool.Count > 0 ? Tones.Green : Tones.Yellow, _pool.Count > 0 ? $"{_pool.Count:N0} loaded" : "none, your IP"),
+            Detail($"{_cfg.Threads} threads, {_cfg.Timeout}s timeout"),
+        };
 
-        Item("1", "Start checking");
-        Item("2", "Usernames");
-        Item("3", "Proxies");
-        Item("4", "Settings");
-        Item("5", "Stats and files");
-        Item("6", "Exit");
+        var right = new List<(string, Tone)[]>
+        {
+            Item("1", "Start checking"),
+            Item("2", "Generate usernames"),
+            Item("3", "Paste usernames"),
+            Item("4", "Proxies"),
+            Item("5", "Settings"),
+            Item("6", "Stats and files"),
+            Item("7", "Exit"),
+        };
+
+        Term.Columns(left, right, 40);
+        Term.Blank();
+        Term.Rule();
 
         if (_names.Count == 0)
         {
             Term.Blank();
-            Term.Line(("  Tip: ", Tones.Purple), ("no usernames ready. Open Usernames to generate or paste a list.", Tones.Gray));
+            Term.Line(("  Tip  ", Tones.Red), ("no usernames ready. Pick 2 to generate some or 3 to paste a list.", Tones.Gray));
         }
         else if (_pool.Count == 0)
         {
             Term.Blank();
-            Term.Line(("  Tip: ", Tones.Purple), ("no proxies added. Checks will use your own IP. Add some under Proxies.", Tones.Gray));
+            Term.Line(("  Tip  ", Tones.Red), ("no proxies, so checks use your own IP. Add some under 4.", Tones.Gray));
         }
 
         ShowNote(note);
@@ -138,7 +155,7 @@ public sealed class App
     private async Task<Note?> StartAsync()
     {
         if (_names.Count == 0)
-            return new Note("No usernames to check. Open Usernames first.", false);
+            return new Note("No usernames to check. Generate or paste some first.", false);
 
         Banner.Show();
         using var runner = new Runner(_cfg, _pool, _blacklist);
@@ -148,14 +165,14 @@ public sealed class App
             return new Note("Cancelled. Fix the connection under Proxies, then try again.", false);
 
         Term.Blank();
+        Term.Section("Checking");
         Term.Line(
-            ("  Running ", Tones.White),
-            ($"{_names.Count:N0} usernames", Tones.Cyan),
-            (" | ", Tones.Gray),
-            ($"{_cfg.Threads} threads", Tones.Cyan),
-            (" | ", Tones.Gray),
-            ($"{_pool.Count} proxies", Tones.Cyan));
-        Term.Line(("  Ctrl+C stops the run", Tones.Gray));
+            ($"  {_names.Count:N0} usernames", Tones.White),
+            ("  |  ", Tones.Gray),
+            ($"{_cfg.Threads} threads", Tones.White),
+            ("  |  ", Tones.Gray),
+            (_pool.Count > 0 ? $"{_pool.Count} proxies" : "your own IP", Tones.White),
+            ("  |  Ctrl+C stops", Tones.Gray));
         Term.Blank();
 
         await runner.RunAsync(_names);
@@ -165,63 +182,47 @@ public sealed class App
         return null;
     }
 
-    private void UsernamesMenu()
+    private Note? PatternMenu()
     {
-        Note? note = null;
-        while (true)
+        Header("Pattern selection");
+
+        for (int i = 0; i < Patterns.All.Length; i++)
         {
-            Header("Usernames");
-            Term.Line(("  Ready  ", Tones.Gray), (_names.Count.ToString("N0"), Tones.Cyan), ("   " + Source(), Tones.Gray));
-            if (_cfg.Usernames.Custom && (_invalid > 0 || _skipped > 0))
-                Term.Line(("         ", Tones.Gray), ($"{_invalid} invalid, {_skipped} already checked", Tones.Gray));
-            Term.Blank();
-            Item("1", "Random generator");
-            Item("2", "Paste my own list");
-            Item("3", "Forget checked names");
-            Item("4", "Back");
-            ShowNote(note);
-            Term.Blank();
-            note = null;
-
-            var choice = Input.Ask("  > ");
-            if (choice == null || choice == "4") return;
-
-            switch (choice)
-            {
-                case "1":
-                    Term.Blank();
-                    _cfg.Usernames.Custom = false;
-                    _cfg.Usernames.Amount = Input.Int("Amount", _cfg.Usernames.Amount, 1, 1_000_000);
-                    _cfg.Usernames.Length = Input.Int("Length", _cfg.Usernames.Length, 2, 32);
-                    _cfg.Usernames.Charset = Input.Choice("Charset", _cfg.Usernames.Charset, UsernameRules.CharsetNames);
-                    _cfg.Normalize();
-                    ConfigStore.Save(_cfg);
-                    Prepare();
-                    note = new Note($"{_names.Count:N0} random usernames ready.", true);
-                    break;
-                case "2":
-                    note = PasteUsernames();
-                    break;
-                case "3":
-                    Term.Blank();
-                    if (Input.Bool("Forget every name checked before", false))
-                    {
-                        _blacklist.Clear();
-                        Prepare();
-                        note = new Note("Cleared. Those names can be checked again.", true);
-                    }
-                    break;
-                default:
-                    note = new Note("Pick a number from the menu.", false);
-                    break;
-            }
+            var p = Patterns.All[i];
+            Term.Line(new[] { ("  ", Tones.Gray) }.Concat(Item((i + 1).ToString(), p.Name, p.Example, 22)).ToArray());
         }
+        Term.Blank();
+
+        var u = _cfg.Usernames;
+        int pick = Input.Int("Pattern", Patterns.IndexOf(u.Pattern) + 1, 1, Patterns.All.Length);
+        var pattern = Patterns.All[pick - 1];
+        int length = Input.Int("Length", Math.Max(u.Length, pattern.MinLength), pattern.MinLength, 32);
+        int count = Input.Int("Count", u.Amount, 1, 1_000_000);
+
+        u.Custom = false;
+        u.Pattern = pattern.Key;
+        u.Length = length;
+        u.Amount = count;
+        _cfg.Normalize();
+        ConfigStore.Save(_cfg);
+
+        Term.Blank();
+        Term.Line(("  Generating...", Tones.Gray));
+        Prepare();
+
+        if (_names.Count == 0)
+            return new Note($"Every {pattern.Name} name at {length} chars was checked before. Try another length.", false);
+        if (_names.Count < count)
+            return new Note($"Only {_names.Count:N0} unchecked {pattern.Name} names fit {length} chars. All of them are ready.", true);
+        return new Note($"{_names.Count:N0} usernames ready ({pattern.Name}, {length} chars).", true);
     }
 
     private Note PasteUsernames()
     {
+        Header("Paste usernames");
+        Term.Line(("  One per line. Press Enter on an empty line to finish.", Tones.Gray));
+        Term.Line(("  2-32 chars: lowercase letters, digits, _ and .", Tones.Gray));
         Term.Blank();
-        Term.Line(("  Paste usernames, one per line. Press Enter on an empty line to finish.", Tones.Gray));
         var pasted = Input.Block();
         var parsed = UsernameRules.Parse(pasted);
         if (parsed.Names.Count == 0)
@@ -237,7 +238,8 @@ public sealed class App
             ConfigStore.Save(_cfg);
             Prepare();
             string extra = parsed.Invalid > 0 ? $", {parsed.Invalid} invalid skipped" : "";
-            return new Note($"{parsed.Names.Count} added. {_names.Count:N0} ready to check{extra}.", true);
+            string seen = _skipped > 0 ? $", {_skipped} checked before" : "";
+            return new Note($"{parsed.Names.Count} added. {_names.Count:N0} ready to check{extra}{seen}.", true);
         }
         catch (Exception ex)
         {
@@ -251,18 +253,15 @@ public sealed class App
         while (true)
         {
             Header("Proxies");
-            Term.Line(("  Loaded  ", Tones.Gray), (_pool.Count.ToString(), Tones.Cyan), ("   ready  ", Tones.Gray), (_pool.Ready().ToString(), Tones.Cyan));
+            Term.Line(Status("LOADED", _pool.Count > 0 ? Tones.Green : Tones.Yellow, _pool.Count.ToString("N0")));
+            Term.Line(Status("READY", _pool.Ready() > 0 ? Tones.Green : Tones.Yellow, _pool.Ready().ToString("N0")));
             Term.Blank();
-            Item("1", "Paste proxies");
-            Item("2", "Test proxies");
-            Item("3", "Edit proxies.txt");
-            Item("4", "Remove all proxies");
-            Item("5", "Back");
+            Menu(("1", "Paste proxies"), ("2", "Test proxies"), ("3", "Open proxies.txt"), ("4", "Remove all proxies"), ("5", "Back"));
             ShowNote(note);
             Term.Blank();
             note = null;
 
-            var choice = Input.Ask("  > ");
+            var choice = Input.Ask("Select an option");
             if (choice == null || choice == "5") return;
 
             switch (choice)
@@ -277,9 +276,9 @@ public sealed class App
                     try
                     {
                         if (!File.Exists(Paths.Proxies)) File.WriteAllText(Paths.Proxies, "");
-                        Process.Start(new ProcessStartInfo { FileName = Paths.Proxies, UseShellExecute = true });
+                        Open(Paths.Proxies);
                         Term.Blank();
-                        Term.Text("  Save the file, then press Enter to reload it", Tones.Gray);
+                        Term.Inline(("  Save the file, then press Enter to reload it", Tones.Gray));
                         Console.ReadLine();
                         _pool.Load();
                         note = new Note($"{_pool.Count} proxies loaded.", true);
@@ -298,6 +297,8 @@ public sealed class App
                         note = new Note("All proxies removed.", true);
                     }
                     break;
+                case "":
+                    break;
                 default:
                     note = new Note("Pick a number from the menu.", false);
                     break;
@@ -309,7 +310,8 @@ public sealed class App
     {
         Term.Blank();
         Term.Line(("  Paste proxies, one per line. Press Enter on an empty line to finish.", Tones.Gray));
-        Term.Line(("  Formats: host:port   host:port:user:pass   http://user:pass@host:port", Tones.Gray));
+        Term.Line(("  host:port   host:port:user:pass   http://user:pass@host:port   socks5://...", Tones.Gray));
+        Term.Blank();
         var pasted = Input.Block();
         if (pasted.Count == 0) return new Note("Nothing pasted.", false);
 
@@ -346,12 +348,12 @@ public sealed class App
         Term.Blank();
         if (_pool.Count == 0)
         {
-            Term.Line(("  [!] ", Tones.Yellow), ("No proxies to test.", Tones.White));
+            Term.Warn("No proxies to test.");
             Input.Pause();
             return;
         }
 
-        Term.Line(("  Testing ", Tones.White), (_pool.Count.ToString(), Tones.Cyan), (" proxies against Discord", Tones.White));
+        Term.Line(("  Testing ", Tones.White), (_pool.Count.ToString(), Tones.Red), (" proxies against Discord", Tones.White));
         Term.Blank();
 
         var dead = new ConcurrentBag<string>();
@@ -382,14 +384,14 @@ public sealed class App
         {
             string top = reasons.GroupBy(r => r).OrderByDescending(g => g.Count()).First().Key;
             Term.Blank();
-            Term.Line(("  [!] ", Tones.Yellow), ("Every proxy failed: " + top, Tones.White));
-            Term.Line(("      Check the login, your data balance, and whether the plan allows discord.com.", Tones.Gray));
+            Term.Warn("Every proxy failed: " + top);
+            Term.Hint("Check the login, your data balance, and whether the plan allows discord.com.");
         }
 
         if (!dead.IsEmpty && alive > 0 && Input.Bool("Remove the dead proxies from the file", false))
         {
             RemoveDead(new HashSet<string>(dead));
-            Term.Line(("  [+] ", Tones.Green), ("Removed", Tones.White));
+            Term.Good("Removed");
         }
         Input.Pause();
     }
@@ -420,15 +422,14 @@ public sealed class App
         Header("Settings");
         var c = _cfg;
 
-        Term.Line(("  Presets", Tones.Gray));
-        Term.Line(("    auto      ", Tones.Cyan), ("threads follow your proxy count", Tones.Gray));
-        Term.Line(("    safe      ", Tones.Cyan), ("5 threads, slow and gentle", Tones.Gray));
-        Term.Line(("    balanced  ", Tones.Cyan), ("20 threads", Tones.Gray));
-        Term.Line(("    fast      ", Tones.Cyan), ("50 threads, needs good proxies", Tones.Gray));
-        Term.Line(("    custom    ", Tones.Cyan), ("set every value yourself", Tones.Gray));
+        Term.Line(("  [", Tones.Gray), ("auto", Tones.White), ("]      threads follow your proxy count", Tones.Gray));
+        Term.Line(("  [", Tones.Gray), ("safe", Tones.White), ("]      5 threads, slow and gentle", Tones.Gray));
+        Term.Line(("  [", Tones.Gray), ("balanced", Tones.White), ("]  20 threads", Tones.Gray));
+        Term.Line(("  [", Tones.Gray), ("fast", Tones.White), ("]      50 threads, needs good proxies", Tones.Gray));
+        Term.Line(("  [", Tones.Gray), ("custom", Tones.White), ("]    set every value yourself", Tones.Gray));
         Term.Blank();
 
-        string preset = Input.Choice("Preset", "keep", new[] { "auto", "safe", "balanced", "fast", "custom" });
+        string preset = Input.Choice("Preset", "keep", new[] { "keep", "auto", "safe", "balanced", "fast", "custom" });
         switch (preset)
         {
             case "auto":
@@ -458,7 +459,7 @@ public sealed class App
         c.Beep = Input.Bool("Beep when a name is available", c.Beep);
 
         string state = string.IsNullOrEmpty(c.Webhook) ? "none" : "set";
-        var hook = Input.Ask($"  Discord webhook [{state}] (- clears): ");
+        var hook = Input.Ask("Discord webhook, - clears", state);
         if (hook == "-")
         {
             c.Webhook = "";
@@ -466,7 +467,7 @@ public sealed class App
         else if (!string.IsNullOrEmpty(hook))
         {
             if (Webhook.IsValid(hook)) c.Webhook = hook;
-            else Term.Line(("  That is not a Discord webhook URL, kept the old value.", Tones.Yellow));
+            else Term.Warn("That is not a Discord webhook URL, kept the old value.");
         }
 
         c.Normalize();
@@ -476,7 +477,7 @@ public sealed class App
         Term.Blank();
         Term.Line(
             ("  [+] ", Tones.Green),
-            ("Saved: ", Tones.White),
+            ("Saved  ", Tones.White),
             ($"{c.Threads} threads, {c.Timeout}s timeout, {(c.Retry.Enabled ? c.Retry.MaxAttempts : 1)} attempts", Tones.Gray));
         Input.Pause();
     }
@@ -497,39 +498,54 @@ public sealed class App
             }
             catch { }
 
-            Term.Row("Sessions", life.Sessions.ToString("N0"), Tones.White);
+            Term.Row("Runs", life.Sessions.ToString("N0"), Tones.White);
             Term.Row("Checked", life.Checked.ToString("N0"), Tones.White);
             Term.Row("Available", life.Available.ToString("N0"), Tones.Green);
             Term.Row("Taken", life.Taken.ToString("N0"), Tones.Red);
             Term.Row("Failed", life.Failed.ToString("N0"), Tones.Yellow);
-            Term.Row("Saved names", saved.ToString("N0"), Tones.Cyan);
+            Term.Row("Saved names", saved.ToString("N0"), Tones.White);
+            Term.Row("Skip list", _blacklist.Count.ToString("N0"), Tones.White);
+            Term.Row("Folder", Paths.Root, Tones.Gray);
             Term.Blank();
-            Item("1", "Open results folder");
-            Item("2", "Open data folder");
-            Item("3", "Open logs folder");
-            Item("4", "Back");
+            Menu(("1", "Open results folder"), ("2", "Open data folder"), ("3", "Open logs folder"), ("4", "Forget checked names"), ("5", "Back"));
             ShowNote(note);
             Term.Blank();
             note = null;
 
-            var choice = Input.Ask("  > ");
-            if (choice == null || choice == "4") return;
+            var choice = Input.Ask("Select an option");
+            if (choice == null || choice == "5") return;
 
             switch (choice)
             {
                 case "1": note = OpenFolder(Paths.Results); break;
                 case "2": note = OpenFolder(Paths.Data); break;
                 case "3": note = OpenFolder(Paths.Logs); break;
+                case "4":
+                    Term.Blank();
+                    if (Input.Bool("Forget every name checked before", false))
+                    {
+                        _blacklist.Clear();
+                        Prepare();
+                        note = new Note("Cleared. Those names can be checked again.", true);
+                    }
+                    break;
+                case "": break;
                 default: note = new Note("Pick a number from the menu.", false); break;
             }
         }
+    }
+
+    // Opens a file or folder with the system default app: Explorer on Windows, Finder on macOS.
+    private static void Open(string path)
+    {
+        Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true })?.Dispose();
     }
 
     private static Note? OpenFolder(string path)
     {
         try
         {
-            Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
+            Open(path);
             return null;
         }
         catch
