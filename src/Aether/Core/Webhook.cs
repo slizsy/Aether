@@ -21,6 +21,7 @@ public sealed class Webhook
 
     private const string BotName = "Aether";
     private const int Green = 0x22C55E;
+    private const int Gold = 0xF5B700;
     private const int Red = 0xEF4444;
     private const int Gray = 0x52525B;
 
@@ -35,6 +36,7 @@ public sealed class Webhook
     };
 
     private readonly string _url;
+    private readonly string _ping;
     private readonly Channel<Hit> _queue = Channel.CreateUnbounded<Hit>(new UnboundedChannelOptions { SingleReader = true });
     private readonly Task _worker;
     private int _sent;
@@ -46,9 +48,10 @@ public sealed class Webhook
     private long _delayMax;
     private int _delayCount;
 
-    public Webhook(string url)
+    public Webhook(string url, string ping)
     {
         _url = url;
+        _ping = ping;
         _worker = Task.Run(WorkAsync);
     }
 
@@ -95,24 +98,40 @@ public sealed class Webhook
         }
     }
 
-    public static async Task<WebhookResult> TestAsync(string url)
+    public static async Task<WebhookResult> TestAsync(string url, string ping)
     {
         var check = await CheckAsync(url);
         if (!check.Ok) return check;
 
-        var payload = Message(
-            "Aether is connected",
-            new
+        string who = PingName(ping);
+        var hello = new
+        {
+            username = BotName,
+            avatar_url = Avatar,
+            content = "Aether is connected",
+            allowed_mentions = NoMentions,
+            embeds = new[]
             {
-                color = Red,
-                author = new { name = "Aether", icon_url = Avatar },
-                title = "Webhook connected",
-                description = "Available usernames will show up here the moment they are found.",
-                footer = Footer(),
-                timestamp = Now()
-            });
-        var sent = await PostAsync(url, payload);
-        return sent.Ok ? new WebhookResult(true, $"Test message sent to \"{check.Message}\". Check your Discord channel.") : sent;
+                new
+                {
+                    color = Red,
+                    author = new { name = "Aether", icon_url = Avatar },
+                    title = "Webhook connected",
+                    description = "Available usernames will show up here the moment they are found."
+                        + (who != "" ? $"\nEach alert pings **{who}**." : "")
+                        + "\nHere is what an alert looks like:",
+                    thumbnail = new { url = Avatar },
+                    footer = Footer(),
+                    timestamp = Now()
+                }
+            }
+        };
+        var sent = await PostAsync(url, hello);
+        if (!sent.Ok) return sent;
+
+        var example = Single(new Hit("abc", 1, 120, 1000, "Letters Only"), "", "Example alert, nothing was found yet");
+        sent = await PostAsync(url, example);
+        return sent.Ok ? new WebhookResult(true, $"Test sent to \"{check.Message}\". Check your Discord channel.") : sent;
     }
 
     public void Post(Hit hit) => _queue.Writer.TryWrite(hit);
@@ -128,13 +147,14 @@ public sealed class Webhook
             : "```\n" + string.Join("\n", names.Take(40)) + (names.Count > 40 ? $"\n+{names.Count - 40} more" : "") + "\n```";
 
         var payload = Message(
-            null,
+            available > 0 ? $"Run {(stopped ? "stopped" : "finished")}: {available:N0} available" : null,
             new
             {
                 color = available > 0 ? Green : Gray,
                 author = new { name = "Aether", icon_url = Avatar },
                 title = stopped ? "Run stopped" : "Run finished",
                 description = list,
+                thumbnail = new { url = Avatar },
                 fields = new[]
                 {
                     Field("Available", available.ToString("N0")),
@@ -168,7 +188,7 @@ public sealed class Webhook
             while (batch.Count < 50 && reader.TryRead(out var hit)) batch.Add(hit);
             if (batch.Count == 0) continue;
 
-            if (await SendAsync(batch.Count == 1 ? Single(batch[0]) : Group(batch)))
+            if (await SendAsync(batch.Count == 1 ? Single(batch[0], _ping) : Group(batch, _ping)))
             {
                 long now = Environment.TickCount64;
                 foreach (var hit in batch)
@@ -182,51 +202,33 @@ public sealed class Webhook
         }
     }
 
-    private static object Single(Hit h) => new
-    {
-        username = BotName,
-        avatar_url = Avatar,
-        content = $"`{h.Name}` is available",
-        embeds = new[]
-        {
-            new
-            {
-                color = Green,
-                author = new { name = "Username available", icon_url = Avatar },
-                description = $"# `{h.Name}`\nGrab it before someone else does.",
-                fields = new[]
-                {
-                    Field("Pattern", h.Source),
-                    Field("Found", $"#{h.Found} this run"),
-                    Field("Progress", $"{h.Done:N0} / {h.Total:N0}"),
-                },
-                footer = Footer(),
-                timestamp = Now()
-            }
-        }
-    };
+    private const string ClaimHint = "Claim it in **User Settings > My Account > Username**.";
 
-    private static object Group(List<Hit> hits)
+    private static bool Rare(string name) => name.Length <= 3;
+
+    private static object Single(Hit h, string ping, string? note = null)
     {
-        var last = hits[^1];
-        string preview = string.Join(", ", hits.Take(20).Select(h => $"`{h.Name}`")) + (hits.Count > 20 ? $" +{hits.Count - 20} more" : "");
+        bool rare = Rare(h.Name);
         return new
         {
             username = BotName,
             avatar_url = Avatar,
-            content = $"{preview} are available",
+            content = note ?? $"{PingText(ping)}`{h.Name}` is available",
+            allowed_mentions = Mentions(ping),
             embeds = new[]
             {
                 new
                 {
-                    color = Green,
-                    author = new { name = $"{hits.Count} usernames available", icon_url = Avatar },
-                    description = "## " + string.Join("  ", hits.Select(h => $"`{h.Name}`")),
+                    color = rare ? Gold : Green,
+                    author = new { name = rare ? "Rare username available" : "Username available", icon_url = Avatar },
+                    description = $"# `{h.Name}`\n{ClaimHint}",
+                    thumbnail = new { url = Avatar },
                     fields = new[]
                     {
-                        Field("Pattern", last.Source),
-                        Field("Found", $"#{hits[0].Found}-#{last.Found} this run"),
-                        Field("Progress", $"{last.Done:N0} / {last.Total:N0}"),
+                        Field("Length", $"{h.Name.Length} characters"),
+                        Field("Pattern", h.Source),
+                        Field("Found", $"#{h.Found} this run"),
+                        Field("Progress", Progress(h)),
                     },
                     footer = Footer(),
                     timestamp = Now()
@@ -234,6 +236,74 @@ public sealed class Webhook
             }
         };
     }
+
+    private static object Group(List<Hit> hits, string ping)
+    {
+        var last = hits[^1];
+        bool rare = hits.Any(h => Rare(h.Name));
+        var ordered = hits.OrderBy(h => h.Name.Length).ThenBy(h => h.Name).ToList();
+        string preview = string.Join(", ", ordered.Take(20).Select(h => $"`{h.Name}`")) + (hits.Count > 20 ? $" +{hits.Count - 20} more" : "");
+        return new
+        {
+            username = BotName,
+            avatar_url = Avatar,
+            content = $"{PingText(ping)}{preview} are available",
+            allowed_mentions = Mentions(ping),
+            embeds = new[]
+            {
+                new
+                {
+                    color = rare ? Gold : Green,
+                    author = new { name = $"{hits.Count} usernames available" + (rare ? ", including rare ones" : ""), icon_url = Avatar },
+                    description = "## " + string.Join("  ", ordered.Select(h => $"`{h.Name}`")) + "\nClaim one in **User Settings > My Account > Username**.",
+                    thumbnail = new { url = Avatar },
+                    fields = new[]
+                    {
+                        Field("Pattern", last.Source),
+                        Field("Found", $"#{hits[0].Found} to #{last.Found} this run"),
+                        Field("Progress", Progress(last)),
+                    },
+                    footer = Footer(),
+                    timestamp = Now()
+                }
+            }
+        };
+    }
+
+    private static string Progress(Hit h) =>
+        $"{h.Done:N0} / {h.Total:N0} ({(h.Total == 0 ? 100 : h.Done * 100 / h.Total)}%)";
+
+    // ping is "", "here", "everyone" or a Discord user ID.
+    public static string NormalizePing(string? raw)
+    {
+        var p = (raw ?? "").Trim().ToLowerInvariant().Trim('<', '>', '@', '!');
+        if (p is "" or "none" or "-" or "no") return "";
+        if (p is "here" or "everyone") return p;
+        return p.All(char.IsDigit) && p.Length is >= 15 and <= 21 ? p : "";
+    }
+
+    public static string PingName(string ping) => ping switch
+    {
+        "" => "",
+        "here" or "everyone" => "@" + ping,
+        _ => "you"
+    };
+
+    private static string PingText(string ping) => ping switch
+    {
+        "" => "",
+        "here" or "everyone" => $"@{ping} ",
+        _ => $"<@{ping}> "
+    };
+
+    private static readonly object NoMentions = new { parse = Array.Empty<string>() };
+
+    private static object Mentions(string ping) => ping switch
+    {
+        "" => NoMentions,
+        "here" or "everyone" => new { parse = new[] { "everyone" } },
+        _ => (object)new { parse = Array.Empty<string>(), users = new[] { ping } }
+    };
 
     private async Task<bool> SendAsync(object payload)
     {
@@ -308,7 +378,7 @@ public sealed class Webhook
         res.Headers.TryGetValues(name, out var values) ? values.FirstOrDefault() : null;
 
     private static object Message(string? content, object embed) =>
-        new { username = BotName, avatar_url = Avatar, content, embeds = new[] { embed } };
+        new { username = BotName, avatar_url = Avatar, content, allowed_mentions = NoMentions, embeds = new[] { embed } };
 
     private static object Field(string name, string value) => new { name, value, inline = true };
 
