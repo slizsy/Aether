@@ -158,7 +158,8 @@ public sealed class App
             return new Note("No usernames to check. Generate or paste some first.", false);
 
         Banner.Show();
-        using var runner = new Runner(_cfg, _pool, _blacklist, Source());
+        string label = _cfg.Usernames.Custom ? "Your own list" : Patterns.Find(_cfg.Usernames.Pattern).Name;
+        using var runner = new Runner(_cfg, _pool, _blacklist, label);
 
         bool connected = await runner.PreflightAsync();
         if (!connected && !Input.Bool("Start anyway", false))
@@ -479,10 +480,27 @@ public sealed class App
             }
         }
 
+        if (!string.IsNullOrEmpty(c.Webhook))
+        {
+            string current = c.Ping == "" ? "none" : c.Ping;
+            var ping = Input.Ask("Ping on alerts: none, here, everyone or your user ID", current);
+            if (!string.IsNullOrEmpty(ping))
+            {
+                string normalized = Webhook.NormalizePing(ping);
+                if (normalized == "" && ping.Trim().ToLowerInvariant() is not ("none" or "-" or "no"))
+                    Term.Hint("That is not a valid user ID. Turn on Developer Mode in Discord, then right-click your name > Copy User ID.");
+                else
+                {
+                    if (normalized != c.Ping) changed = true;
+                    c.Ping = normalized;
+                }
+            }
+        }
+
         if (!string.IsNullOrEmpty(c.Webhook) && Input.Bool("Send a test message", changed))
         {
             Term.Line(("  Sending...", Tones.Gray));
-            var test = await Webhook.TestAsync(c.Webhook);
+            var test = await Webhook.TestAsync(c.Webhook, c.Ping);
             if (test.Ok) Term.Good(test.Message);
             else Term.Warn("Webhook failed: " + test.Message);
         }
