@@ -1,7 +1,7 @@
 using System.Text;
 using System.Text.Json;
 
-namespace SlizsyChecker;
+namespace Aether;
 
 public static class Webhook
 {
@@ -22,20 +22,20 @@ public static class Webhook
         {
             var payload = new
             {
-                username = "Slizsy Checker",
+                username = "Aether",
                 embeds = new[]
                 {
                     new
                     {
                         title = "Username available",
                         description = "`" + username + "`",
-                        color = 0xA855F7,
+                        color = 0xEF4444,
                         timestamp = DateTime.UtcNow.ToString("o"),
                         fields = new[]
                         {
                             new { name = "Found this session", value = foundThisSession.ToString(), inline = true }
                         },
-                        footer = new { text = "made by slizsy" }
+                        footer = new { text = "Aether, made by slizsy" }
                     }
                 }
             };
