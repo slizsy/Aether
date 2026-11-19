@@ -142,7 +142,8 @@ public sealed class Runner : IDisposable
             await _hook.FinishAsync(stats.Done, stats.Total, stats.Available, stats.Taken, stats.Failed + stats.Invalid,
                 stats.Clock.Elapsed, stopped, _found.ToArray());
             if (_hook.Failed == 0)
-                Term.Row("Webhook", $"{_hook.Sent} messages sent", Tones.Green);
+                Term.Row("Webhook", $"{_hook.Sent} messages sent" + (_found.IsEmpty ? "" :
+                    $", names reached Discord in {_hook.AverageDelay:0.0}s on average ({_hook.MaxDelay:0.0}s slowest)"), Tones.Green);
             else
                 Term.Row("Webhook", $"{_hook.Failed} failed: {_hook.LastError}", Tones.Yellow);
         }
