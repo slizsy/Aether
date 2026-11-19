@@ -99,7 +99,7 @@ public sealed class Runner : IDisposable
         using var session = new SessionFiles();
         using var cts = new CancellationTokenSource();
         bool stopped = false;
-        _hook = string.IsNullOrWhiteSpace(_cfg.Webhook) ? null : new Webhook(_cfg.Webhook);
+        _hook = string.IsNullOrWhiteSpace(_cfg.Webhook) ? null : new Webhook(_cfg.Webhook, _cfg.Ping);
 
         ConsoleCancelEventHandler onCancel = (_, e) =>
         {
