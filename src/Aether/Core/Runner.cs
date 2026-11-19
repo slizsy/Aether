@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 
-namespace SlizsyChecker;
+namespace Aether;
 
 public sealed class RunStats
 {
@@ -37,7 +37,7 @@ public sealed class Runner : IDisposable
 
     public async Task<bool> PreflightAsync()
     {
-        Term.Line(("  Checking the connection to Discord...", Tones.Gray));
+        Term.Section("Connection check");
 
         ProxyNode?[] samples = _pool.Count == 0
             ? new ProxyNode?[] { null }
@@ -64,18 +64,18 @@ public sealed class Runner : IDisposable
         if (ok > 0)
         {
             if (_pool.Count > 0 && ok < samples.Length)
-                Term.Line(("  [!] ", Tones.Yellow), ("Some proxies failed. Proxies > Test proxies can remove them.", Tones.White));
+                Term.Warn("Some proxies failed. Proxies > Test proxies can remove them.");
             return true;
         }
 
         if (_pool.Count > 0)
         {
-            Term.Line(("  [!] ", Tones.Yellow), ("Discord could not be reached through your proxies.", Tones.White));
-            Term.Line(("      Check the login, your data balance, and whether the plan allows discord.com.", Tones.Gray));
+            Term.Warn("Discord could not be reached through your proxies.");
+            Term.Hint("Check the login, your data balance, and whether the plan allows discord.com.");
         }
         else
         {
-            Term.Line(("  [!] ", Tones.Yellow), ("Discord could not be reached from this connection.", Tones.White));
+            Term.Warn("Discord could not be reached from this connection.");
         }
         return false;
     }
@@ -94,7 +94,7 @@ public sealed class Runner : IDisposable
             {
                 stopped = true;
                 cts.Cancel();
-                Term.Line(("  [!] ", Tones.Yellow), ("Stopping...", Tones.Gray));
+                Term.Warn("Stopping...");
             }
         };
         Console.CancelKeyPress += onCancel;
@@ -120,7 +120,7 @@ public sealed class Runner : IDisposable
         stats.Clock.Stop();
         await ticker.DisposeAsync();
         Term.ClearStatus();
-        Term.Title($"Slizsy Checker | Available {stats.Available} | Taken {stats.Taken} | Failed {stats.Failed + stats.Invalid}");
+        Term.Title("Aether");
         Summary(stats, session, stopped);
 
         var life = LifetimeStats.Load();
@@ -145,7 +145,7 @@ public sealed class Runner : IDisposable
                 _blacklist.Add(name);
                 session.AddAvailable(name);
                 Emit(session, "[+]", Tones.Green, "available", name, done, s.Total, true, null);
-                if (_cfg.Beep) Beep();
+                if (_cfg.Beep) Term.Bell();
                 if (!string.IsNullOrWhiteSpace(_cfg.Webhook))
                     await Webhook.SendAsync(_cfg.Webhook, name, found);
                 break;
@@ -157,7 +157,7 @@ public sealed class Runner : IDisposable
                 break;
             case Verdict.Invalid:
                 Interlocked.Increment(ref s.Invalid);
-                Emit(session, "[~]", Tones.Yellow, "invalid", name, done, s.Total, _cfg.Verbose, null);
+                Emit(session, "[~]", Tones.Gray, "invalid", name, done, s.Total, _cfg.Verbose, null);
                 break;
             default:
             {
@@ -178,7 +178,7 @@ public sealed class Runner : IDisposable
         session.Log($"{time} {tag} {word} {name} [{done}/{total}]" + (detail != null ? $" ({detail})" : ""));
         if (!show) return;
         Term.Line(
-            ($"  {time} ", Tones.Gray),
+            ($"  {time}  ", Tones.Gray),
             ($"{tag} ", tone),
             ($"{word,-10}", tone),
             (name, Tones.White),
@@ -203,7 +203,7 @@ public sealed class Runner : IDisposable
         var tail = new List<(string, Tone)>
         {
             ($"{s.Done}/{s.Total}  ", Tones.White),
-            ($"{rate:0.0}/s  ", Tones.Cyan)
+            ($"{rate:0.0}/s  ", Tones.Silver)
         };
         if (rate > 0 && left > 0)
         {
@@ -222,8 +222,8 @@ public sealed class Runner : IDisposable
         var parts = new List<(string Text, Tone Color)> { ("  ", Tones.Gray) };
         if (barLen > 0)
         {
-            parts.Add((new string('\u2588', filled), Tones.Purple));
-            parts.Add((new string('\u2591', barLen - filled) + " ", Tones.Gray));
+            parts.Add((new string('█', filled), Tones.Red));
+            parts.Add((new string('░', barLen - filled) + " ", Tones.Ember));
         }
         foreach (var t in tail) parts.Add((t.Item1, t.Item2));
         Term.SetStatus(parts.ToArray());
@@ -234,21 +234,21 @@ public sealed class Runner : IDisposable
         try
         {
             int left = Math.Max(0, s.Total - s.Done);
-            Term.Title($"Slizsy Checker | Available {s.Available} | Taken {s.Taken} | Failed {s.Failed + s.Invalid} | Left {left}");
+            Term.Title($"Aether | Available {s.Available} | Taken {s.Taken} | Left {left}");
             UpdateStatus(s, true);
 
             double seconds = s.Clock.Elapsed.TotalSeconds;
             if (!_warnedStall && s.Done == 0 && seconds >= 20)
             {
                 _warnedStall = true;
-                Term.Line(("  [!] ", Tones.Yellow), ("No results after 20 seconds. The proxies may be slow or blocking Discord.", Tones.White));
-                Term.Line(("      Press Ctrl+C, then use Proxies > Test proxies.", Tones.Gray));
+                Term.Warn("No results after 20 seconds. The proxies may be slow or blocking Discord.");
+                Term.Hint("Press Ctrl+C, then use Proxies > Test proxies.");
             }
             if (!_warnedAllFail && s.Done >= 10 && s.Available + s.Taken == 0)
             {
                 _warnedAllFail = true;
-                Term.Line(("  [!] ", Tones.Yellow), ("Every check is failing: " + TopReasons(2), Tones.White));
-                Term.Line(("      Press Ctrl+C and check your proxies.", Tones.Gray));
+                Term.Warn("Every check is failing: " + TopReasons(2));
+                Term.Hint("Press Ctrl+C and check your proxies.");
             }
         }
         catch { }
@@ -269,35 +269,20 @@ public sealed class Runner : IDisposable
         string time = elapsed.ToString(@"hh\:mm\:ss");
 
         Term.Blank();
-        Term.Line(
-            ("  " + new string('\u2500', 6) + " ", Tones.Purple),
-            (stopped ? "Stopped" : "Finished", Tones.Pink),
-            (" " + new string('\u2500', 22), Tones.Cyan));
+        Term.Section(stopped ? "Stopped" : "Finished");
         Term.Row("Checked", $"{s.Done}/{s.Total}", Tones.White);
         Term.Row("Available", s.Available.ToString(), Tones.Green);
         Term.Row("Taken", s.Taken.ToString(), Tones.Red);
-        Term.Row("Invalid", s.Invalid.ToString(), Tones.Yellow);
+        Term.Row("Invalid", s.Invalid.ToString(), Tones.Gray);
         Term.Row("Failed", s.Failed.ToString(), Tones.Yellow);
         if (s.Failed > 0)
             Term.Row("Reasons", TopReasons(3), Tones.Gray);
-        Term.Row("Time", time, Tones.Cyan);
-        Term.Row("Speed", $"{rate:0.0}/s", Tones.Cyan);
+        Term.Row("Time", time, Tones.White);
+        Term.Row("Speed", $"{rate:0.0}/s", Tones.White);
         if (s.Available > 0)
-            Term.Row("Saved", Path.GetRelativePath(Paths.Root, session.AvailablePath), Tones.Sky);
+            Term.Row("Saved", Path.GetRelativePath(Paths.Root, session.AvailablePath), Tones.Green);
         Term.Row("Log", Path.GetRelativePath(Paths.Root, session.LogPath), Tones.Gray);
 
         session.Log($"summary checked={s.Done}/{s.Total} available={s.Available} taken={s.Taken} invalid={s.Invalid} failed={s.Failed} time={time} speed={rate:0.0}/s");
-    }
-
-    private static void Beep()
-    {
-        _ = Task.Run(() =>
-        {
-            try
-            {
-                if (OperatingSystem.IsWindows()) Console.Beep(880, 120);
-            }
-            catch { }
-        });
     }
 }
