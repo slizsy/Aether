@@ -6,7 +6,10 @@ using System.Threading.Channels;
 
 namespace Aether;
 
-public sealed record Hit(string Name, int Found, int Done, int Total, string Source);
+public sealed record Hit(string Name, int Found, int Done, int Total, string Source)
+{
+    public long FoundAt { get; } = Environment.TickCount64;
+}
 
 public readonly record struct WebhookResult(bool Ok, string Message);
 
@@ -37,6 +40,11 @@ public sealed class Webhook
     private int _sent;
     private int _failed;
     private int _warned;
+    private int _paced;
+    private long _readyAt;
+    private long _delayTotal;
+    private long _delayMax;
+    private int _delayCount;
 
     public Webhook(string url)
     {
@@ -48,13 +56,22 @@ public sealed class Webhook
     public int Failed => _failed;
     public string? LastError { get; private set; }
 
+    // How long finds took to reach Discord, from the moment they were found.
+    public double AverageDelay => _delayCount == 0 ? 0 : _delayTotal / (double)_delayCount / 1000;
+    public double MaxDelay => _delayMax / 1000.0;
+
     public static string Clean(string url) => url.Trim().Trim('"', '\'', '<', '>');
 
     public static bool IsValid(string url) => UrlShape.IsMatch(Clean(url));
 
     private static HttpClient CreateClient()
     {
-        var handler = new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(10) };
+        // Keep the connection to Discord open between finds, so a new find never waits on a handshake.
+        var handler = new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(15),
+            PooledConnectionIdleTimeout = TimeSpan.FromMinutes(10),
+        };
         var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
         client.DefaultRequestHeaders.UserAgent.ParseAdd("Aether/2.1 (+https://github.com/slizsy/Aether)");
         return client;
@@ -136,16 +153,43 @@ public sealed class Webhook
     private async Task WorkAsync()
     {
         var reader = _queue.Reader;
-        var batch = new List<Hit>(10);
+        var batch = new List<Hit>(50);
         while (await reader.WaitToReadAsync())
         {
+            long wait = Interlocked.Read(ref _readyAt) - Environment.TickCount64;
+            if (wait > 0)
+            {
+                if (wait > 1500 && Interlocked.Exchange(ref _paced, 1) == 0)
+                    Term.Line(("  [~] ", Tones.Gray), ("Discord is pacing alerts. Names found meanwhile are sent together.", Tones.Gray));
+                await Task.Delay((int)Math.Min(wait, 60_000));
+            }
+
             batch.Clear();
-            while (batch.Count < 10 && reader.TryRead(out var hit)) batch.Add(hit);
+            while (batch.Count < 50 && reader.TryRead(out var hit)) batch.Add(hit);
             if (batch.Count == 0) continue;
 
-            string names = string.Join(", ", batch.Select(h => $"`{h.Name}`"));
-            string content = batch.Count == 1 ? $"{names} is available" : $"{names} are available";
-            var embeds = batch.Select(h => (object)new
+            if (await SendAsync(batch.Count == 1 ? Single(batch[0]) : Group(batch)))
+            {
+                long now = Environment.TickCount64;
+                foreach (var hit in batch)
+                {
+                    long delay = now - hit.FoundAt;
+                    _delayTotal += delay;
+                    _delayCount++;
+                    if (delay > _delayMax) _delayMax = delay;
+                }
+            }
+        }
+    }
+
+    private static object Single(Hit h) => new
+    {
+        username = BotName,
+        avatar_url = Avatar,
+        content = $"`{h.Name}` is available",
+        embeds = new[]
+        {
+            new
             {
                 color = Green,
                 author = new { name = "Username available", icon_url = Avatar },
@@ -158,30 +202,70 @@ public sealed class Webhook
                 },
                 footer = Footer(),
                 timestamp = Now()
-            }).ToArray();
-
-            await SendAsync(new { username = BotName, avatar_url = Avatar, content, embeds });
+            }
         }
+    };
+
+    private static object Group(List<Hit> hits)
+    {
+        var last = hits[^1];
+        string preview = string.Join(", ", hits.Take(20).Select(h => $"`{h.Name}`")) + (hits.Count > 20 ? $" +{hits.Count - 20} more" : "");
+        return new
+        {
+            username = BotName,
+            avatar_url = Avatar,
+            content = $"{preview} are available",
+            embeds = new[]
+            {
+                new
+                {
+                    color = Green,
+                    author = new { name = $"{hits.Count} usernames available", icon_url = Avatar },
+                    description = "## " + string.Join("  ", hits.Select(h => $"`{h.Name}`")),
+                    fields = new[]
+                    {
+                        Field("Pattern", last.Source),
+                        Field("Found", $"#{hits[0].Found}-#{last.Found} this run"),
+                        Field("Progress", $"{last.Done:N0} / {last.Total:N0}"),
+                    },
+                    footer = Footer(),
+                    timestamp = Now()
+                }
+            }
+        };
     }
 
-    private async Task SendAsync(object payload)
+    private async Task<bool> SendAsync(object payload)
     {
-        var result = await PostAsync(_url, payload);
+        long wait = Interlocked.Read(ref _readyAt) - Environment.TickCount64;
+        if (wait > 0) await Task.Delay((int)Math.Min(wait, 60_000));
+
+        var result = await PostAsync(_url, payload, wait: false, limit: Hold);
         if (result.Ok)
         {
             Interlocked.Increment(ref _sent);
-            return;
+            return true;
         }
         Interlocked.Increment(ref _failed);
         LastError = result.Message;
         if (Interlocked.Exchange(ref _warned, 1) == 0)
             Term.Warn("Webhook failed: " + result.Message);
+        return false;
     }
 
-    private static async Task<WebhookResult> PostAsync(string url, object payload)
+    // Remembers when Discord's rate limit window opens again.
+    private void Hold(TimeSpan delay)
+    {
+        long at = Environment.TickCount64 + (long)delay.TotalMilliseconds;
+        long current;
+        do current = Interlocked.Read(ref _readyAt);
+        while (at > current && Interlocked.CompareExchange(ref _readyAt, at, current) != current);
+    }
+
+    private static async Task<WebhookResult> PostAsync(string url, object payload, bool wait = true, Action<TimeSpan>? limit = null)
     {
         url = Clean(url);
-        string target = url + (url.Contains('?') ? "&" : "?") + "wait=true";
+        string target = wait ? url + (url.Contains('?') ? "&" : "?") + "wait=true" : url;
         string json = JsonSerializer.Serialize(payload, Json);
 
         for (int attempt = 1; attempt <= 5; attempt++)
@@ -190,12 +274,18 @@ public sealed class Webhook
             {
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
                 using var res = await Client.PostAsync(target, content);
+                if (limit != null && Header(res, "X-RateLimit-Remaining") == "0"
+                    && double.TryParse(Header(res, "X-RateLimit-Reset-After"), System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out var reset))
+                    limit(TimeSpan.FromSeconds(reset));
                 if (res.IsSuccessStatusCode) return new WebhookResult(true, "sent");
 
                 string body = await res.Content.ReadAsStringAsync();
                 if (res.StatusCode == HttpStatusCode.TooManyRequests)
                 {
-                    await Task.Delay(RetryAfter(res, body));
+                    var retry = RetryAfter(res, body);
+                    limit?.Invoke(retry);
+                    await Task.Delay(retry);
                     continue;
                 }
                 if ((int)res.StatusCode >= 500)
@@ -213,6 +303,9 @@ public sealed class Webhook
         }
         return new WebhookResult(false, "Discord kept rate limiting the webhook.");
     }
+
+    private static string? Header(HttpResponseMessage res, string name) =>
+        res.Headers.TryGetValues(name, out var values) ? values.FirstOrDefault() : null;
 
     private static object Message(string? content, object embed) =>
         new { username = BotName, avatar_url = Avatar, content, embeds = new[] { embed } };
