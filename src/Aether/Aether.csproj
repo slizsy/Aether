@@ -5,13 +5,13 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>SlizsyChecker</AssemblyName>
-    <RootNamespace>SlizsyChecker</RootNamespace>
+    <AssemblyName>Aether</AssemblyName>
+    <RootNamespace>Aether</RootNamespace>
     <ApplicationIcon>icon.ico</ApplicationIcon>
-    <Product>Slizsy Checker</Product>
+    <Product>Aether</Product>
     <Authors>slizsy</Authors>
     <Company>slizsy</Company>
-    <Version>1.1.0</Version>
+    <Version>2.0.0</Version>
     <InvariantGlobalization>true</InvariantGlobalization>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
