@@ -3,7 +3,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 
-namespace SlizsyChecker;
+namespace Aether;
 
 public enum Verdict { Available, Taken, Invalid, Error }
 
